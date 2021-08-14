@@ -6,7 +6,7 @@ Bundler::Plugin.add_hook(Bundler::Plugin::Events::GEM_AFTER_INSTALL) do |spec_in
     puts format('Building native extensions for %s %s in source tree at %s', spec.name, spec.version, spec.source.expanded_original_path)
 
     # If our current Bundler root path is identical with the base dir, add a "tmp/" directory to place extension build results in
-    if spec.base_dir == Bundler.root
+    if Pathname.new(spec.base_dir) == Bundler.root
       spec.base_dir = File.join(spec.base_dir, 'tmp')
       # Reset cached values for extension_dir (which is derived from base_dir)
       spec.extension_dir = nil

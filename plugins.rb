@@ -1,2 +1,2 @@
-require 'bundler-path-build-ext'
+require 'bundler-source-pathext'
 

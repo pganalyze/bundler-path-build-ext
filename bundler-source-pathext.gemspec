@@ -1,8 +1,6 @@
-require_relative 'lib/bundler-source-pathext/version'
-
 Gem::Specification.new do |spec|
   spec.name          = "bundler-source-pathext"
-  spec.version       = BundlerSourcePathext::VERSION
+  spec.version       = "0.2.1"
   spec.authors       = ["pganalyze Team"]
   spec.email         = ["team@pganalyze.com"]
 

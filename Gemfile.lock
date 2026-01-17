@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    bundler-source-pathext (0.2.0)
+    bundler-source-pathext (0.3.0)
 
 GEM
   remote: https://rubygems.org/

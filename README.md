@@ -14,7 +14,7 @@ source './folder', type: 'pathext' do
 end
 ```
 
-Different from Rubygems, this plugin will prefer `rake compile` when an extension has a Rakefile, only falling back to the [Gem::Ext::Builder](https://github.com/ruby/rubygems/blob/master/lib/rubygems/ext/builder.rb) (or [other builders](https://github.com/ruby/rubygems/blob/master/lib/rubygems/ext/builder.rb#L173)) if needed. This is aimed at making debugging easier.
+Different from Rubygems, this plugin uses a modified version of [Gem::Ext::Builder](https://github.com/ruby/rubygems/blob/master/lib/rubygems/ext/builder.rb) for Ruby extensions with an "extconf" folder, that does not create an additional copy of the created binaries in the extension install folder. This is done to avoid caching issues where the version in the extension install folder gets stale.
 
 ## LICENSE
 

@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "bundler-source-pathext"
-  spec.version       = "0.2.1"
+  spec.version       = "0.3.0"
   spec.authors       = ["pganalyze Team"]
   spec.email         = ["team@pganalyze.com"]
 

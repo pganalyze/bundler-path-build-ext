@@ -1,4 +1,7 @@
 class BundlerSourcePathext < Bundler::Plugin::API
+  HAS_TARGET_RBCONFIG = Gem.rubygems_version >= Gem::Version.new("3.6")
+  HAS_NJOBS = Gem.rubygems_version >= Gem::Version.new("4.0.2")
+
   class PathExtSource < Bundler::Source
     def install(spec, opts)
       print_using_message "Using #{spec.name} #{spec.version} from #{self}"
@@ -87,39 +90,41 @@ class BundlerSourcePathext < Bundler::Plugin::API
 
       dest_path = spec.extension_dir
       start = Time.now
-      load_dir = File.dirname(spec.loaded_from)
 
-      success = true
       spec.extensions.each do |extension|
-        if extension[/extconf/] && File.exist?(File.join(load_dir, 'Rakefile'))
-          rake_args = ['compile']
-          builder.class.run(rake + rake_args, [], 'rake compile (via ' + self.class.to_s + ')', load_dir) do |status, results|
-            unless status.success?
-              success = false
-              puts results
-            end
-          end
-        else
-          builder.build_extension extension, dest_path
-        end
+        builder_for_ext = if extension[/extconf/]
+                            ExtConfAlwaysCopyBuilder
+                          else
+                            builder.builder_for(extension)
+                          end
+
+        # This throws a Gem::Ext::BuildError if building the extension fails
+        build_extension spec, builder, builder_for_ext, extension, dest_path
       end
-      puts format('  Finished after %0.2f seconds', Time.now - start)
-      FileUtils.touch(spec.gem_build_complete_path) if success
+      puts format('  Finished %s after %0.2f seconds', spec.name, Time.now - start)
+      FileUtils.touch(spec.gem_build_complete_path)
     end
 
-    def rake
-      rake = ENV["rake"]
+    def build_extension(spec, builder, builder_for_ext, extension, dest_path) # :nodoc:
+      results = []
 
-      if rake
-        rake = Shellwords.split(rake)
-      else
-        begin
-          rake = Gem::Ext::Builder.ruby << "-rrubygems" << Gem.bin_path("rake", "rake")
-        rescue Gem::Exception
-          rake = [Gem.default_exec_format % "rake"]
-        end
+      extension_dir =
+        File.expand_path File.join(spec.full_gem_path, File.dirname(extension))
+      lib_dir = File.join spec.full_gem_path, spec.raw_require_paths.first
+
+      begin
+        FileUtils.mkdir_p dest_path
+
+        results = builder_for_ext.build(extension, dest_path,
+                                        results, @build_args, lib_dir, extension_dir)
+
+        builder.verbose { results.join("\n") }
+
+        builder.write_gem_make_out results.join "\n"
+      rescue StandardError => e
+        results << e.message
+        builder.build_error(results.join("\n"), $@)
       end
-      rake
     end
 
     def generate_bin(spec, options = {})
@@ -161,4 +166,101 @@ class BundlerSourcePathext < Bundler::Plugin::API
   end
 
   source 'pathext', PathExtSource
+
+  # Modified version of Gem::Ext::ExtConfBuilder that always copies the built binary
+  # to the destination path. This is necessary because when using local gems we cannot
+  # rely on versions being bumped when the gem changes.
+  require 'rubygems/ext'
+  class ExtConfAlwaysCopyBuilder < Gem::Ext::Builder
+    def self.build(extension, dest_path, results, args = [], lib_dir = nil, extension_dir = Dir.pwd,
+      target_rbconfig = nil, n_jobs: nil)
+      require "fileutils"
+      require "tempfile"
+
+      target_rbconfig ||= Gem.target_rbconfig if HAS_TARGET_RBCONFIG
+
+      tmp_dest = Dir.mktmpdir(".gem.", extension_dir)
+
+      # Some versions of `mktmpdir` return absolute paths, which will break make
+      # if the paths contain spaces.
+      #
+      # As such, we convert to a relative path.
+      tmp_dest_relative = get_relative_path(tmp_dest.clone, extension_dir)
+
+      destdir = ENV["DESTDIR"]
+
+      begin
+        cmd = ruby << File.basename(extension)
+        cmd << "--target-rbconfig=#{target_rbconfig.path}" if HAS_TARGET_RBCONFIG && target_rbconfig.path
+        cmd.push(*args)
+
+        run(cmd, results, 'ExtConfAlwaysCopy', extension_dir) do |s, r|
+          mkmf_log = File.join(extension_dir, "mkmf.log")
+          if File.exist? mkmf_log
+            unless s.success?
+              r << "To see why this extension failed to compile, please check" \
+                " the mkmf.log which can be found here:\n"
+              r << "  " + File.join(dest_path, "mkmf.log") + "\n"
+            end
+            FileUtils.mv mkmf_log, dest_path
+          end
+        end
+
+        ENV["DESTDIR"] = nil
+
+        if HAS_TARGET_RBCONFIG && HAS_NJOBS
+          make dest_path, results, extension_dir, tmp_dest_relative, target_rbconfig: target_rbconfig, n_jobs: n_jobs
+        elsif HAS_TARGET_RBCONFIG
+          make dest_path, results, extension_dir, tmp_dest_relative, target_rbconfig: target_rbconfig
+        else
+          make dest_path, results, extension_dir, tmp_dest_relative
+        end
+
+        full_tmp_dest = File.join(extension_dir, tmp_dest_relative)
+
+        is_cross_compiling = HAS_TARGET_RBCONFIG && target_rbconfig["platform"] != RbConfig::CONFIG["platform"]
+        # Do not copy extension libraries by default when cross-compiling
+        # not to conflict with the one already built for the host platform.
+        if Gem.install_extension_in_lib && lib_dir && !is_cross_compiling
+          FileUtils.mkdir_p lib_dir
+          entries = Dir.entries(full_tmp_dest) - %w[. ..]
+          entries = entries.map {|entry| File.join full_tmp_dest, entry }
+          FileUtils.cp_r entries, lib_dir, remove_destination: true
+        end
+
+        # MODIFIED
+        # We skip installing into the destination directory, because we can rely on the copy in lib/ instead
+        # This also causes caching issues with stale files
+        #FileUtils::Entry_.new(full_tmp_dest).traverse do |ent|
+        #  destent = ent.class.new(dest_path, ent.rel)
+        #  destent.exist? || FileUtils.mv(ent.path, destent.path)
+        #end
+
+        if HAS_TARGET_RBCONFIG
+          make dest_path, results, extension_dir, tmp_dest_relative, ["clean"], target_rbconfig: target_rbconfig
+        else
+          make dest_path, results, extension_dir, tmp_dest_relative, ["clean"]
+        end
+      ensure
+        ENV["DESTDIR"] = destdir
+      end
+
+      results
+    rescue => error
+      if defined?(Gem::Ext::Builder::NoMakefileError) && error.is_a?(Gem::Ext::Builder::NoMakefileError)
+        results << error.message
+        results << "Skipping make for #{extension} as no Makefile was found."
+        # We are good, do not re-raise the error.
+      else
+        raise
+      end
+    ensure
+      FileUtils.rm_rf tmp_dest if tmp_dest
+    end
+
+    def self.get_relative_path(path, base)
+      path[0..base.length - 1] = "." if path.start_with?(base)
+      path
+    end
+  end
 end

@@ -1,4 +1,4 @@
-# bundle-source-pathext [ ![](https://img.shields.io/gem/v/bundle-source-pathext.svg)](https://rubygems.org/gems/bundle-source-pathext) [ ![](https://img.shields.io/gem/dt/bundle-source-pathext.svg)](https://rubygems.org/gems/bundle-source-pathext)
+# bundler-source-pathext [ ![](https://img.shields.io/gem/v/bundler-source-pathext.svg)](https://rubygems.org/gems/bundler-source-pathext) [ ![](https://img.shields.io/gem/dt/bundler-source-pathext.svg)](https://rubygems.org/gems/bundler-source-pathext)
 
 This bundler plugin allows building local Ruby extensions that are referred to by a local path, similar to how gems are built when they are fetched from a remote path.
 
